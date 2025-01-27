@@ -8,13 +8,13 @@ async function tryRespondFromCache(request) {
   const url = request.url;
   const isMedia = url.endsWith('.jpg') || url.endsWith('.mp3') || url.endsWith('.flac');
   if (!isMedia) {
-    console.log('No media', url);
+    // console.warn('No media', url);
     return false;
   }
 
   const cachedResponse = await cache.match(url, { ignoreSearch: true, ignoreVary: true });
   if (!cachedResponse) {
-    console.log('БЕЗ КЕША', url);
+    // console.warn('БЕЗ КЕША', url);
     return false;
   }
 
