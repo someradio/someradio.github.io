@@ -71,9 +71,9 @@ self.addEventListener('install', (event) => {
   );
 });
 
-self.addEventListener('fetch', (event) => {
-  const response = tryRespondFromCache(event.request);
-  response && event.waitUntil(response);
-});
+// self.addEventListener('fetch', (event) => {
+//   const response = tryRespondFromCache(event.request);
+//   response && event.waitUntil(response);
+// });
 
 console.log('Hello from SW!!!');
