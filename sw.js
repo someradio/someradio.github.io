@@ -1,79 +1,89 @@
-const cacheName = 'audio-cache-v1';
+const CACHE_NAME = 'audio-cache-v2';
+const MAX_CACHE_AGE = 30 * 24 * 60 * 60 * 1000; // 30 days
 
-async function tryRespondFromCache(request) {
-  // открываем кеш
-  const cache = await caches.open(cacheName);
+const MEDIA_EXTS = /\.(mp3|flac|ogg|wav|aac|m4a|jpg|jpeg|png|webp)$/i;
 
-  // ищем кеш для URL
-  const url = request.url;
-  const isMedia = url.endsWith('.jpg') || url.endsWith('.mp3') || url.endsWith('.flac');
-  if (!isMedia) {
-    // console.warn('No media', url);
-    return false;
+/* self.addEventListener('install', () => {
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))))
+  );
+  self.clients.claim();
+});
+
+self.addEventListener('fetch', (event) => {
+  const url = event.request.url;
+  if (!MEDIA_EXTS.test(url)) return;
+
+  event.respondWith(handleMediaRequest(event.request));
+}); */
+
+async function handleMediaRequest(request) {
+  const cache = await caches.open(CACHE_NAME);
+  const cached = await cache.match(request, { ignoreSearch: true, ignoreVary: true });
+
+  if (cached) {
+    return serveRange(request, cached);
   }
 
-  const cachedResponse = await cache.match(url, { ignoreSearch: true, ignoreVary: true });
-  if (!cachedResponse) {
-    // console.warn('БЕЗ КЕША', url);
-    return false;
+  try {
+    const networkResponse = await fetch(request);
+    if (networkResponse.ok) {
+      cache.put(request, networkResponse.clone());
+    }
+    return networkResponse;
+  } catch {
+    return new Response('Offline', { status: 503 });
   }
+}
 
-  // обрабатываем Range
+function serveRange(request, cachedResponse) {
   const range = request.headers.get('range');
-  let rangeTotal = 0;
-  let rangeStart = 0;
-  let rangeEnd = 0;
+  if (!range) return cachedResponse;
 
-  if (range === null) {
-    console.log('Из кеша без Range', url);
-    return cachedResponse;
-  }
+  const match = /^bytes=(\d*)-(\d*)$/i.exec(range);
+  if (!match) return cachedResponse;
 
-  const rangeParts = /^bytes=(\d*)-(\d*)$/gi.exec(range);
-  if (rangeParts[1] === '' && rangeParts[2] === '') {
-    console.log('Из кеша пустой Range', url);
-    return cachedResponse;
-  }
+  return cachedResponse.arrayBuffer().then((buffer) => {
+    const total = buffer.byteLength;
+    let start = match[1] ? Number(match[1]) : total - Number(match[2]);
+    let end = match[2] ? Number(match[2]) : total - 1;
+    if (start > end) start = end;
 
-  console.log('Range из кеша', url, rangeStart, rangeEnd);
-  const buffer = await cachedResponse.arrayBuffer();
-  rangeStart = Number(rangeParts[1]);
-  rangeEnd = Number(rangeParts[2]);
-  rangeTotal = buffer.byteLength;
-  if (rangeParts[1] === '') {
-    rangeStart = rangeTotal - rangeEnd;
-    rangeEnd = rangeTotal - 1;
-  }
-  if (rangeParts[2] === '') {
-    rangeEnd = rangeTotal - 1;
-  }
-  let headers = new Headers();
-  for (let [k, v] of cachedResponse.headers) {
-    headers.set(k, v);
-  }
-  headers.set('Content-Range', `bytes ${rangeStart}-${rangeEnd}/${rangeTotal}`);
-  headers.set('Content-Length', rangeEnd - rangeStart + 1);
-  return new Response(buffer.slice(rangeStart, rangeEnd + 1), {
-    status: 206,
-    statusText: 'Partial Content',
-    headers: headers
+    const headers = new Headers();
+    for (const [k, v] of cachedResponse.headers) headers.set(k, v);
+    headers.set('Content-Range', `bytes ${start}-${end}/${total}`);
+    headers.set('Content-Length', end - start + 1);
+    headers.set('Accept-Ranges', 'bytes');
+
+    return new Response(buffer.slice(start, end + 1), {
+      status: 206,
+      statusText: 'Partial Content',
+      headers
+    });
   });
 }
 
-self.addEventListener('install', (event) => {
-  const urlsToPrefetch = [];
-  console.log('Handling install event. Resources to prefetch:', urlsToPrefetch);
-  self.skipWaiting();
-  event.waitUntil(
-    caches.open(cacheName).then(function (cache) {
-      return cache.addAll(urlsToPrefetch);
-    })
-  );
-});
-
-// self.addEventListener('fetch', (event) => {
-//   const response = tryRespondFromCache(event.request);
-//   response && event.waitUntil(response);
-// });
-
-console.log('Hello from SW!!!');
+// Periodic cache cleanup
+setInterval(async () => {
+  const cache = await caches.open(CACHE_NAME);
+  const keys = await cache.keys();
+  let size = 0;
+  for (const req of keys) {
+    const resp = await cache.match(req);
+    if (resp) {
+      const blob = await resp.blob();
+      size += blob.size;
+    }
+  }
+  if (size > 500 * 1024 * 1024) {
+    // Remove oldest entries when over 500MB
+    const toDelete = keys.slice(0, Math.floor(keys.length * 0.3));
+    for (const req of toDelete) {
+      await cache.delete(req);
+    }
+  }
+}, 60 * 60 * 1000);
