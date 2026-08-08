@@ -1,0 +1,1 @@
+"use strict";(self["webpackChunkemptyproject"]=self["webpackChunkemptyproject"]||[]).push([[8488],{8488:function(e,t,c){c.d(t,{createArchitectureServices:function(){return r.S}});var r=c(89221);c(51400)}}]);
